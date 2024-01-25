@@ -113,14 +113,30 @@ Resources:
 #
   S3BucketBlogEMROnOutposts:
     Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "Logs will not be enable for this bucket"
+          - id: W51
+            reason: "Bucket policy will not be defined for this bucket"
     Properties:
       BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
 
 # -----------------------------------------------------------------------------------
 #  VPC used to deploy EMR on Outposts
 #
   VPCEMRonOutposts:
     Type: 'AWS::EC2::VPC'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W60
+            reason: "VPC flow log will not be enable in this sample code. If you need to enable it, follow the instructions in https://docs.aws.amazon.com/vpc/latest/userguide/working-with-flow-logs.html"
     Properties:
       CidrBlock: !Ref VpcCIDR
       EnableDnsHostnames: true
@@ -258,6 +274,11 @@ Resources:
   # IAM role that Amazon EMR assumes to provision resources and perform service-level actions with other AWS services.
   IAMAmazonEMROutpostsClusterRole:
     Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "The rolename will be used to create the EMR Cluster"
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -317,13 +338,18 @@ Resources:
             Action:
               - secretsmanager:GetSecretValue
             Resource:
-              - "*"
+              - !Ref CredentialsStoredInTheSecretsManager
       Roles:
         - !Ref IAMAmazonEMROutpostsEC2Role
 
   # The IAM role to be associated to every EC2 instance in the EMR cluster
   IAMAmazonEMROutpostsEC2Role:
     Type: 'AWS::IAM::Role'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "The rolename will be used to create the EMR Cluster"
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -355,6 +381,11 @@ Resources:
 #
   CredentialsStoredInTheSecretsManager:
     Type: 'AWS::SecretsManager::Secret'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W77
+            reason: "If you don't specify this value, then Secrets Manager uses the key aws/secretsmanager"
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
@@ -374,11 +405,23 @@ Resources:
   # Security group for the VPC endpoints
   VPCEndpointsSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W29
+            reason: "Allow ephemeral ports"
     Properties:
-      GroupDescription: 'Allow HTTPS traffic from the VPC'
+      GroupDescription: Allow HTTPS traffic from the VPC
       VpcId: !Ref VPCEMRonOutposts
       SecurityGroupIngress:
-        - IpProtocol: tcp
+        - Description: Allow inboud traffic inside the VPC on port 443
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt VPCEMRonOutposts.CidrBlock
+      SecurityGroupEgress:
+        - Description: Allow outbound traffic inside the VPC
+          IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: !GetAtt VPCEMRonOutposts.CidrBlock
