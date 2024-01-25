@@ -111,10 +111,10 @@ Resources:
 # -----------------------------------------------------------------------------------
 #  Bucket to store the support files to deploy the EMR on Outposts
 #
-  #S3BucketBlogEMROnOutposts:
-  #  Type: 'AWS::S3::Bucket'
-  #  Properties:
-  #    BucketName: !Ref S3BucketName
+  S3BucketBlogEMROnOutposts:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref S3BucketName
 
 # -----------------------------------------------------------------------------------
 #  VPC used to deploy EMR on Outposts
