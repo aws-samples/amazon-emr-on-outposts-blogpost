@@ -1,0 +1,473 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description:  This template deploys the infrastructure for the EMR on Outposts blog post
+
+Parameters:
+# -----------------------------------------------------------------------------------
+# S3 bucket used to store the support files
+#
+  S3BucketName:
+    Type: "String"
+    Description: "The bucket name used to store the support files used to deploy the EMR on Outposts."
+    Default: "blog-emr-on-outposts"
+
+# -----------------------------------------------------------------------------------
+# IAM Roles and policies parameters
+#
+  AmazonEMROutpostsClusterRole:
+    Type: "String"
+    Description: "The IAM role name that Amazon EMR assumes to provision resources and perform service-level actions with other AWS services."
+    Default: "AmazonEMR-outposts-cluster-role"
+
+  AmazonEMROutpostsEC2Policy:
+    Type: "String"
+    Description: "The IAM policy name that will be attached to the AmazonEMROutpostsClusterRole."
+    Default: "AmazonEMR-outposts-EC2-policy"
+
+  AmazonEMROutpostsEC2Role:
+    Type: "String"
+    Description: "The IAM role name to be associated to every EC2 instance in the EMR cluster."
+    Default: "AmazonEMR-outposts-EC2-role"
+
+  AmazonEMROutpostsClusterPolicy:
+    Type: "String"
+    Description: "The IAM policy name that will be attached to the AmazonEMROutpostsEC2Role."
+    Default: "AmazonEMR-outposts-cluster-policy"
+  
+# -----------------------------------------------------------------------------------
+#  On-premises database parameters
+#
+  DatabaseOnPremisesSecretName:
+    Type: "String"
+    Description: "The name of the secret to store credentials of the database on-premises."
+    Default: "database-on-premises"
+  
+  DBOnPremisesUsername:
+    Type: "String"
+    Description: "The user name to be stored in Secrets Manager."
+  
+  DBOnPremisesPassword:
+    Type: "String"
+    Description: "The password to be stored in Secrets Manager."
+  
+  DBOnPremisesEngine:
+    Type: "String"
+    Description: "The database engine name to be stored in Secrets Manager."
+
+  DBOnPremisesHost:
+    Type: "String"
+    Description: "The IP address of the database on-premises to be stored in Secrets Manager."
+
+  DBOnPremisesPort:
+    Type: "String"
+    Description: "The port number of the database on-premises to be stored in Secrets Manager."
+
+  DBOnPremisesDBName:
+    Type: "String"
+    Description: "The on-premises database name to be stored in Secrets Manager."
+  
+# -----------------------------------------------------------------------------------
+# VPC and subnet CIDRs
+#
+  VpcCIDR:
+    Type: "String"
+    Description: "VPC CIDR."
+    Default: "10.0.0.0/16"
+  
+  RegionalSubnetCIDR:
+    Type: "String"
+    Description: "CIDR of the private subnet created in the region."
+    Default: "10.0.1.0/24"
+
+  OutpostSubnetCIDR:
+    Type: "String"
+    Description: "CIDR of the private subnet created in the Outpost."
+    Default: "10.0.0.0/24"
+
+  OnPremisesCIDR:
+    Type: "String"
+    Description: "CIDR of the on-premises network"
+    Default: "10.30.0.0/24"
+
+# -----------------------------------------------------------------------------------
+#  Information about the AWS Outposts Rack
+#
+  OutpostARN:
+    Type: "String"
+    Description: "The Amazon Resource Name (ARN) of the Outpost (ex: arn:aws:outposts:us-east-1:012345678901:outpost/op-01234567890abcdef)"
+
+  LocalGatewayId:
+    Type: "String"
+    Description: "The ID of the local gateway (ex: lgw-01234567890abcdef)"
+
+  LocalGatewayRouteTableId:
+    Type: "String"
+    Description: "The ID of the local gateway route table (ex: lgw-rtb-01234567890123456)"
+  
+  OutpostAvailabilityZone:
+    Type: "String"
+    Description: "Availability zone of Outposts (ex: us-east-1)"
+
+Resources:
+# -----------------------------------------------------------------------------------
+#  Bucket to store the support files to deploy the EMR on Outposts
+#
+  #S3BucketBlogEMROnOutposts:
+  #  Type: 'AWS::S3::Bucket'
+  #  Properties:
+  #    BucketName: !Ref S3BucketName
+
+# -----------------------------------------------------------------------------------
+#  VPC used to deploy EMR on Outposts
+#
+  VPCEMRonOutposts:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: "Name"
+          Value: "vpc-emr-on-outposts"
+
+  # VPC association with the Outpost Local Gateway
+  VPCAssociationLGWRouteTable:
+    Type: 'AWS::EC2::LocalGatewayRouteTableVPCAssociation'
+    Properties:
+         LocalGatewayRouteTableId: !Ref LocalGatewayRouteTableId
+         VpcId: !Ref VPCEMRonOutposts
+
+# -----------------------------------------------------------------------------------
+#  Regional private subnet used for the VPCs endpoints
+#
+  # Subnet created in the region for the VPV endpoints
+  RegionalPrivateSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPCEMRonOutposts
+      CidrBlock: !Ref RegionalSubnetCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: "Name"
+          Value: "regional-private-subnet"
+
+  # Route table for the private subnet created in the region
+  RegionalPrivateSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCEMRonOutposts
+      Tags:
+        - Key: Name
+          Value: "regional-private-subnet-route-table"
+
+  # Association of the route table with the private subnet created in the region
+  RegionalPrivateSubnetZARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RegionalPrivateSubnetRouteTable
+      SubnetId: !Ref RegionalPrivateSubnet
+
+# -----------------------------------------------------------------------------------
+#  Outpost private subnet used for the EMR Cluster on Outpost
+#
+  # Subnet create in the Outposts for the EMR Cluster
+  OutpostPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPCEMRonOutposts
+      CidrBlock: !Ref OutpostSubnetCIDR
+      OutpostArn: !Ref OutpostARN
+      AvailabilityZone: !Ref OutpostAvailabilityZone
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: "Name"
+          Value: "outpost-private-subnet"
+
+  # Route table for the private subnet created in the Outposts
+  OutpostPrivateSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCEMRonOutposts
+      Tags:
+        - Key: Name
+          Value: "outpost-private-subnet-route-table"
+
+  # Association of the route table with the private subnet created in the Outposts
+  OutpostPrivateSubnetZARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref OutpostPrivateSubnetRouteTable
+      SubnetId: !Ref OutpostPrivateSubnet
+
+  # Route to allow the EMR Cluster nodes to communicate to the on-premises database
+  OutpostPrivateSubnetRouteToOnPremisesNetwork:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OutpostPrivateSubnetRouteTable
+      DestinationCidrBlock: !Ref OnPremisesCIDR
+      LocalGatewayId: !Ref LocalGatewayId
+
+# -----------------------------------------------------------------------------------
+#  IAM roles and policies used to create the EMR Cluster
+#
+  # IAM policy that will be attached to the AmazonEMROutpostsClusterRole
+  IAMAmazonEMROutpostsClusterPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Ref AmazonEMROutpostsClusterPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Sid: CreateInNetwork
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:RunInstances
+              - ec2:CreateFleet
+              - ec2:CreateLaunchTemplate
+              - ec2:CreateLaunchTemplateVersion
+            Resource:
+              - arn:aws:ec2:*:*:subnet/*
+              - arn:aws:ec2:*:*:security-group/*
+          - Effect: Allow
+            Sid: ManageSecurityGroups
+            Action:
+              - ec2:AuthorizeSecurityGroupEgress
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupEgress
+              - ec2:RevokeSecurityGroupIngress
+            Resource:
+              - arn:aws:ec2:*:*:security-group/*
+          - Effect: Allow
+            Sid: CreateDefaultSecurityGroupInVPC
+            Action:
+              - ec2:CreateSecurityGroup
+            Resource:
+              - arn:aws:ec2:*:*:vpc/*
+          - Effect: Allow
+            Sid: PassRoleForEC2
+            Action:
+              - iam:PassRole
+            Resource:
+              - arn:aws:iam::*:role/AmazonEMR-outposts-EC2-role
+            Condition:
+              StringLike:
+                "iam:PassedToService": "ec2.amazonaws.com"
+      Roles:
+        - !Ref IAMAmazonEMROutpostsClusterRole
+
+  # IAM role that Amazon EMR assumes to provision resources and perform service-level actions with other AWS services.
+  IAMAmazonEMROutpostsClusterRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - elasticmapreduce.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+           - arn:aws:iam::aws:policy/service-role/AmazonEMRServicePolicy_v2
+           - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+      Path: /
+      RoleName: !Ref AmazonEMROutpostsClusterRole
+
+  # IAM policy name that will be attached to the AmazonEMROutpostsEC2Role
+  IAMAmazonEMROutpostsEC2Policy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Ref AmazonEMROutpostsEC2Policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:CreateBucket
+              - s3:DeleteObject
+              - s3:ListBucket
+              - s3:ListBucketMultipartUploads
+              - s3:ListBucketVersions
+              - s3:ListMultipartUploadParts
+              - s3:PutBucketVersioning
+              - s3:PutObject
+              - s3:PutObjectTagging
+            Resource:
+              - !Join ['',['arn:aws:s3:::', !Ref S3BucketName, '/logs']]
+              - !Join ['',['arn:aws:s3:::', !Ref S3BucketName, '/logs/*']]
+          - Effect: Allow
+            Action:
+              - s3:GetBucketVersioning
+              - s3:GetObject
+              - s3:GetObjectTagging
+              - s3:GetObjectVersion
+              - s3:ListBucket
+              - s3:ListBucketMultipartUploads
+              - s3:ListBucketVersions
+              - s3:ListMultipartUploadParts
+            Resource:
+              - arn:aws:s3:::elasticmapreduce
+              - arn:aws:s3:::elasticmapreduce/*
+              - arn:aws:s3:::*.elasticmapreduce/*
+              - !Join ['',['arn:aws:s3:::', !Ref S3BucketName, '/*']]
+              - !Join ['',['arn:aws:s3:::', !Ref S3BucketName]]
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - "*"
+      Roles:
+        - !Ref IAMAmazonEMROutpostsEC2Role
+
+  # The IAM role to be associated to every EC2 instance in the EMR cluster
+  IAMAmazonEMROutpostsEC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role
+      Path: /
+      RoleName: !Ref AmazonEMROutpostsEC2Role
+
+  # The IAM instance profile role to be associated to every EC2 instance in the EMR cluster
+  IAMAmazonEMROutpostsEC2RoleInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: !Ref AmazonEMROutpostsEC2Role
+      Path: /
+      Roles:
+        - !Ref IAMAmazonEMROutpostsEC2Role
+
+# -----------------------------------------------------------------------------------
+#  Secret to store the credentials of the database on-premises 
+#
+  CredentialsStoredInTheSecretsManager:
+    Type: 'AWS::SecretsManager::Secret'
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Name: !Ref DatabaseOnPremisesSecretName
+      SecretString: !Sub
+                      - '{"username":"${USERNAME}","password":"${PASSWORD}","engine":"${ENGINE}","host":"${HOST}","port":"${PORT}","dbname":"${DBNAME}"}'
+                      - USERNAME: !Ref DBOnPremisesUsername
+                        PASSWORD: !Ref DBOnPremisesPassword
+                        ENGINE: !Ref DBOnPremisesEngine
+                        HOST: !Ref DBOnPremisesHost
+                        PORT: !Ref DBOnPremisesPort
+                        DBNAME: !Ref DBOnPremisesDBName
+
+# -----------------------------------------------------------------------------------
+#  VPC endpoints
+#
+  # Security group for the VPC endpoints
+  VPCEndpointsSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow HTTPS traffic from the VPC'
+      VpcId: !Ref VPCEMRonOutposts
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt VPCEMRonOutposts.CidrBlock
+
+  # VPC endpoint for the EMR service
+  ElasticMapReduceVPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.elasticmapreduce'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+
+  # VPC endpoint for the Secrets Manager service
+  SecretsManagerVPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+  
+  # VPC endpoint for the SSM service
+  SSMVPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+
+  # VPC endpoint for the SSM service
+  SSMMessagesVPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+
+  # VPC endpoint for the EC2 service
+  EC2MessagesVPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+
+  # VPC endpoint for the EC2 service
+  EC2VPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref VPCEndpointsSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      SubnetIds:
+        - !Ref RegionalPrivateSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCEMRonOutposts
+
+  # VPC endpoint for the S3 service
+  S3VPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      RouteTableIds:
+        - !Ref RegionalPrivateSubnetRouteTable
+        - !Ref OutpostPrivateSubnetRouteTable
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPCEMRonOutposts
