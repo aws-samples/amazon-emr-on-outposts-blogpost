@@ -1,11 +1,6 @@
-## My Project
+## Deploying an EMR Cluster on Outposts to process data from an on-premises database
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+This is the code repository for code sample used in the blog Deploying an EMR Cluster on Outposts to process data from an on-premises database
 
 ## Security
 
